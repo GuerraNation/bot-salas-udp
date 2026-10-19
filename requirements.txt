@@ -6,3 +6,5 @@ langchain-huggingface
 sentence-transformers
 pypdf
 chromadb
+gspread
+google-auth
