@@ -22,14 +22,16 @@ os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 # ----------------- CONEXIÓN A GOOGLE SHEETS -----------------
 def guardar_registro_nube(pregunta, respuesta):
-    estado = "Derivada a Javier" if "edicion.comyletras@mail.udp.cl" in respuesta else "Respondida por PDF"
+    # Detecta la frase exacta de derivación
+    if "Eso no lo puedo responder" in respuesta:
+        estado = "Derivada a Javier"
+    else:
+        estado = "Resuelta"
+        
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     try:
-        # Leer el secreto de Streamlit de forma segura
         credenciales_dict = json.loads(st.secrets["CREDENCIALES_JSON"])
-        
-        # Configurar permisos para leer y escribir
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -37,7 +39,6 @@ def guardar_registro_nube(pregunta, respuesta):
         creds = Credentials.from_service_account_info(credenciales_dict, scopes=scopes)
         cliente = gspread.authorize(creds)
         
-        # ABRIR EL GOOGLE SHEET POR SU URL 
         url_sheet = "https://docs.google.com/spreadsheets/d/133S4N9ePAKy8ZH86xTJaNBAR-6VBvCU4N3ortTlalw0/edit?gid=0#gid=0"
         
         hoja = cliente.open_by_url(url_sheet).sheet1
@@ -60,11 +61,13 @@ def iniciar_sistema():
         
     llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0.2)
     
+    # INSTRUCCIONES MEJORADAS CON LA FRASE DE DERIVACIÓN
     instrucciones = ChatPromptTemplate.from_messages([
         ("system", "Eres el asistente de las Salas de Edición de Comunicación y Letras UDP. "
                    "Utiliza SOLO la información proporcionada en el contexto. "
-                   "Si te saludan, debes decir: '¡Hola! Soy el asistente de las Salas de Edición de Comunicación y Letras UDP. Te puedo ayudar con reservas, horarios, reglas y el servidor NEXIS. ¿En qué te ayudo?' "
-                   "Si preguntan temas fuera del manual, excepciones, fallas de equipos o del servidor NEXIS, deriva la consulta a Javier Guerra al correo edicion.comyletras@mail.udp.cl. "
+                   "Si te saludan, di: '¡Hola! Soy el asistente de las Salas de Edición UDP. Te ayudo con reservas, horarios, reglas y NEXIS. ¿En qué te ayudo?' "
+                   "REGLA DE DERIVACIÓN: Si te preguntan algo que no está en el manual, fallas de equipos, caídas del servidor o excepciones, NO intentes responder. "
+                   "DEBES responder EXACTAMENTE y ÚNICAMENTE con esta frase: 'Eso no lo puedo responder: solo ayudo con las Salas de Edición. Si tu duda es sobre las salas y no la encuentro, escribe a edicion.comyletras@mail.udp.cl.' "
                    "Contexto:\n{context}"),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}")
@@ -90,7 +93,7 @@ for mensaje in st.session_state.mensajes:
 pregunta_sugerida = None
 if len(st.session_state.mensajes) == 0:
     st.markdown("<h3 style='text-align: center; color: #888;'>¿Por dónde empezamos?</h3>", unsafe_allow_html=True)
-    st.write("") # Espaciador
+    st.write("") 
     col1, col2, col3 = st.columns(3)
     if col1.button("⏱️ Horarios"): 
         pregunta_sugerida = "¿Cuál es el horario de las salas de edición?"
@@ -98,6 +101,10 @@ if len(st.session_state.mensajes) == 0:
         pregunta_sugerida = "¿Cómo puedo reservar una sala?"
     if col3.button("🖥️ Uso de NEXIS"): 
         pregunta_sugerida = "¿Cuáles son las reglas del servidor NEXIS?"
+# ----------------------------------------------------------------------
+
+# ----------------- MENSAJE DE ADVERTENCIA (FOOTER) --------------------
+st.markdown("<p style='text-align: center; font-size: 12px; color: #888; margin-top: 20px;'>Tus consultas serán registradas para mejorar el sistema</p>", unsafe_allow_html=True)
 # ----------------------------------------------------------------------
 
 # Caja de texto para el alumno
@@ -109,7 +116,6 @@ pregunta_final = pregunta_sugerida or pregunta_usuario
 if pregunta_final:
     st.chat_message("user").markdown(pregunta_final)
     
-    # Preparar historial
     historial_langchain = []
     for msg in st.session_state.mensajes:
         if msg["rol"] == "user":
@@ -117,12 +123,10 @@ if pregunta_final:
         else:
             historial_langchain.append(AIMessage(content=msg["contenido"]))
             
-    # Obtener respuesta
     respuesta = chatbot.invoke({"input": pregunta_final, "chat_history": historial_langchain})
     
     st.chat_message("assistant").markdown(respuesta)
     
-    # Guardar en memoria y en GOOGLE SHEETS
     st.session_state.mensajes.append({"rol": "user", "contenido": pregunta_final})
     st.session_state.mensajes.append({"rol": "assistant", "contenido": respuesta})
     guardar_registro_nube(pregunta_final, respuesta)
