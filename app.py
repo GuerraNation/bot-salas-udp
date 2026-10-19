@@ -1,5 +1,9 @@
 import streamlit as st
 import os
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -10,12 +14,39 @@ from langchain_core.output_parsers import StrOutputParser
 from operator import itemgetter
 from langchain_core.messages import HumanMessage, AIMessage
 
+st.set_page_config(page_title="Asistente Salas UDP", page_icon="🎬")
 st.title("🎬 Asistente Salas de Edición UDP")
 
 # Configurar la API Key desde los secretos de Streamlit
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
-# Configurar el sistema (se guarda en caché para no recargar el PDF en cada mensaje)
+# ----------------- CONEXIÓN A GOOGLE SHEETS -----------------
+def guardar_registro_nube(pregunta, respuesta):
+    estado = "Derivada a Javier" if "edicion.comyletras@mail.udp.cl" in respuesta else "Respondida por PDF"
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    try:
+        # Leer el secreto de Streamlit de forma segura
+        credenciales_dict = json.loads(st.secrets["CREDENCIALES_JSON"])
+        
+        # Configurar permisos para leer y escribir
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(credenciales_dict, scopes=scopes)
+        cliente = gspread.authorize(creds)
+        
+        # ABRIR EL GOOGLE SHEET POR SU URL 
+        url_sheet = "https://docs.google.com/spreadsheets/d/133S4N9ePAKy8ZH86xTJaNBAR-6VBvCU4N3ortTlalw0/edit?gid=0#gid=0"
+        
+        hoja = cliente.open_by_url(url_sheet).sheet1
+        hoja.append_row([fecha, estado, pregunta, respuesta])
+    except Exception as e:
+        print(f"Error al guardar en la nube: {e}")
+# ------------------------------------------------------------
+
+# Configurar el sistema
 @st.cache_resource
 def iniciar_sistema():
     loader = PyPDFLoader("manual-salas-edicion.pdf")
@@ -55,11 +86,30 @@ for mensaje in st.session_state.mensajes:
     with st.chat_message(mensaje["rol"]):
         st.markdown(mensaje["contenido"])
 
+# ----------------- PANTALLA DE INICIO (ESTILO GEMINI) -----------------
+pregunta_sugerida = None
+if len(st.session_state.mensajes) == 0:
+    st.markdown("<h3 style='text-align: center; color: #888;'>¿Por dónde empezamos?</h3>", unsafe_allow_html=True)
+    st.write("") # Espaciador
+    col1, col2, col3 = st.columns(3)
+    if col1.button("⏱️ Horarios"): 
+        pregunta_sugerida = "¿Cuál es el horario de las salas de edición?"
+    if col2.button("📅 Reservas"): 
+        pregunta_sugerida = "¿Cómo puedo reservar una sala?"
+    if col3.button("🖥️ Uso de NEXIS"): 
+        pregunta_sugerida = "¿Cuáles son las reglas del servidor NEXIS?"
+# ----------------------------------------------------------------------
+
 # Caja de texto para el alumno
-if pregunta := st.chat_input("Escribe tu duda aquí..."):
-    st.chat_message("user").markdown(pregunta)
+pregunta_usuario = st.chat_input("Escribe tu duda aquí...")
+
+# Lógica principal
+pregunta_final = pregunta_sugerida or pregunta_usuario
+
+if pregunta_final:
+    st.chat_message("user").markdown(pregunta_final)
     
-    # Preparar historial para Gemini
+    # Preparar historial
     historial_langchain = []
     for msg in st.session_state.mensajes:
         if msg["rol"] == "user":
@@ -68,10 +118,14 @@ if pregunta := st.chat_input("Escribe tu duda aquí..."):
             historial_langchain.append(AIMessage(content=msg["contenido"]))
             
     # Obtener respuesta
-    respuesta = chatbot.invoke({"input": pregunta, "chat_history": historial_langchain})
+    respuesta = chatbot.invoke({"input": pregunta_final, "chat_history": historial_langchain})
     
     st.chat_message("assistant").markdown(respuesta)
     
-    # Guardar en memoria
-    st.session_state.mensajes.append({"rol": "user", "contenido": pregunta})
+    # Guardar en memoria y en GOOGLE SHEETS
+    st.session_state.mensajes.append({"rol": "user", "contenido": pregunta_final})
     st.session_state.mensajes.append({"rol": "assistant", "contenido": respuesta})
+    guardar_registro_nube(pregunta_final, respuesta)
+    
+    if pregunta_sugerida:
+        st.rerun()
