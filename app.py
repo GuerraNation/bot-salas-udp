@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import json
 import gspread
+import pytz
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from langchain_community.document_loaders import PyPDFLoader
@@ -22,13 +23,14 @@ os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 # ----------------- CONEXIÓN A GOOGLE SHEETS -----------------
 def guardar_registro_nube(pregunta, respuesta):
-    # Detecta la frase exacta de derivación
     if "Eso no lo puedo responder" in respuesta:
         estado = "Derivada a Javier"
     else:
         estado = "Resuelta"
         
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # AQUÍ ESTÁ EL ARREGLO: Forzar la zona horaria de Chile
+    zona_chile = pytz.timezone('America/Santiago')
+    fecha = datetime.now(zona_chile).strftime("%Y-%m-%d %H:%M:%S")
     
     try:
         credenciales_dict = json.loads(st.secrets["CREDENCIALES_JSON"])
@@ -61,7 +63,6 @@ def iniciar_sistema():
         
     llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0.2)
     
-    # INSTRUCCIONES MEJORADAS CON LA FRASE DE DERIVACIÓN
     instrucciones = ChatPromptTemplate.from_messages([
         ("system", "Eres el asistente de las Salas de Edición de Comunicación y Letras UDP. "
                    "Utiliza SOLO la información proporcionada en el contexto. "
