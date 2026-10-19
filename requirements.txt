@@ -8,3 +8,5 @@ pypdf
 chromadb
 gspread
 google-auth
+torchvision
+pytz
